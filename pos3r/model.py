@@ -192,12 +192,12 @@ class RayCroCoNet (
         feat, pos, shape = self._encode(batch)
 
         # combine all ref images into object-centric representation
-        # dec = self._decoder(feat, pos)
+        dec = self._decoder(feat, pos)
         with torch.cuda.amp.autocast(enabled=False):
-            # res1 = self._downstream_head(1, [tok.float() for tok in dec], shape)
-            # res2 = self._downstream_head(2, [tok.float() for tok in dec], shape)
-            res1 = self._downstream_head(1, feat, shape)
-            res2 = self._downstream_head(2, feat, shape)
+            res1 = self._downstream_head(1, [tok.float() for tok in dec], shape)
+            res2 = self._downstream_head(2, [tok.float() for tok in dec], shape)
+            # res1 = self._downstream_head(1, feat, shape)
+            # res2 = self._downstream_head(2, feat, shape)
 
         # res2['pts3d_in_other_view'] = res2.pop('pts3d')  # predict view2's pts3d in view1's frame
         return res1, res2

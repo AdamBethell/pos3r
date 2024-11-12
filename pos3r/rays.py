@@ -351,6 +351,65 @@ def rays_to_cameras(
     cam.T = -torch.matmul(R.transpose(1, 2), camera_centers.unsqueeze(2)).squeeze(2)
     return cam
 
+def masked_rays_to_cameras(
+    rays,
+    crop_parameters,
+    mask,
+    num_patches_x=224,
+    num_patches_y=224,
+    use_half_pix=True,
+    sampled_ray_idx=None,
+    cameras=None,
+    focal_length=(3.453,),
+):
+    """
+    If cameras are provided, will use those intrinsics. Otherwise will use the provided
+    focal_length(s). Dataset default is 3.32.
+
+    Args:
+        rays (Rays): (N, P, 6)
+        crop_parameters (torch.Tensor): (N, 4)
+    """
+    device = rays.device
+    origins = rays.get_origins()
+    directions = rays.get_directions()
+    camera_centers, _ = intersect_skew_lines_high_dim(origins, directions, mask)
+
+    # Retrieve target rays
+    if cameras is None:
+        if len(focal_length) == 1:
+            focal_length = focal_length * rays.shape[0]
+        I_camera = PerspectiveCameras(focal_length=focal_length, device=device)
+    else:
+        # Use same intrinsics but reset to identity extrinsics.
+        I_camera = cameras.clone()
+        I_camera.R[:] = torch.eye(3, device=device)
+        I_camera.T[:] = torch.zeros(3, device=device)
+    I_patch_rays = cameras_to_rays(
+        cameras=I_camera,
+        num_patches_x=num_patches_x,
+        num_patches_y=num_patches_y,
+        use_half_pix=use_half_pix,
+        crop_parameters=crop_parameters,
+    ).get_directions()
+
+    if sampled_ray_idx is not None:
+        I_patch_rays = I_patch_rays[:, sampled_ray_idx]
+
+    # Compute optimal rotation to align rays
+    R = torch.zeros_like(I_camera.R)
+    for i in range(len(I_camera)):
+        R[i] = compute_optimal_rotation_alignment(
+            I_patch_rays[i][mask[i]],
+            directions[i][mask[i]],
+        )
+
+    # Construct and return rotated camera
+    cam = I_camera.clone()
+    cam.R = R
+    cam.T = -torch.matmul(R.transpose(1, 2), camera_centers.unsqueeze(2)).squeeze(2)
+    return cam
+
 
 # https://www.reddit.com/r/learnmath/comments/v1crd7/linear_algebra_qr_to_ql_decomposition/
 def ql_decomposition(A):

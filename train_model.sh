@@ -1,6 +1,6 @@
 python train.py \
-    --train_dataset="Omni6DPose(ROOT='../RGBGenPose/data/SOPE', resolution=224)" \
-    --test_dataset="Omni6DPose(ROOT='../RGBGenPose/data/SOPE', resolution=224, mode='test')" \
+    --train_dataset="NOCS(ROOT='../RGBGenPose/data', resolution=224, source='CAMERA+Real')" \
+    --test_dataset="NOCS(ROOT='../RGBGenPose/data', resolution=224, mode='real_test')" \
     --train_criterion="Pos3rCriterion()" \
     --test_criterion="Regr3D(L21)" \
     --model="RayCroCoNet(pos_embed='RoPE100', img_size=(224, 224), head_type='linear', output_mode='pts3d', depth_mode=('exp', -inf, inf), conf_mode=None, enc_embed_dim=1024, enc_depth=24, enc_num_heads=16, dec_embed_dim=768, dec_depth=12, dec_num_heads=12)" \

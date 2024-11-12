@@ -23,14 +23,14 @@ class LinearPts3d (nn.Module):
         self.has_conf = has_conf
         self.output_dim = output_dim
 
-        self.proj = nn.Linear(net.enc_embed_dim, (output_dim + has_conf)*self.patch_size**2)
+        self.proj = nn.Linear(net.dec_embed_dim, (output_dim + has_conf)*self.patch_size**2)
 
     def setup(self, croconet):
         pass
 
-    def forward(self, tokens, img_shape):
+    def forward(self, decout, img_shape):
         H, W = img_shape
-        # tokens = decout[-1]
+        tokens = decout[-1]
 
         B, S, D = tokens.shape
 
