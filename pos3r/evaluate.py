@@ -32,7 +32,7 @@ from pos3r.model import RayCroCoNet
 from pos3r.datasets import get_data_loader  # noqa
 from pos3r.losses import *  # noqa: F401, needed when loading the model
 from pos3r.inference import loss_of_one_batch  # noqa
-from pos3r.eval_utils import pose_eval, pt_eval
+from pos3r.eval_utils import pose_eval_nocs, pose_eval_omni, pt_eval, compute_RT_matches, compute_accs_and_aps
 
 import pos3r.utils.path_to_croco  # noqa: F401
 import croco.utils.misc as misc  # noqa
@@ -89,10 +89,18 @@ def evaluate(args):
 
     # training dataset and loader
     print('Building test dataset {:s}'.format(args.test_dataset))
+
     # data_loader_test = {dataset.split('(')[0]: build_dataset(dataset, args.batch_size, args.num_workers, test=True)
     #                     for dataset in args.test_dataset.split('+')}
     data_loader_test = build_dataset(args.test_dataset, args.batch_size, args.num_workers, test=True)
 
+    if data_loader_test.dataset.dataset_label == "NOCS" :
+        dataset = "NOCS"
+    elif data_loader_test.dataset.dataset_label == "Omni6DPose":
+        dataset = "Omni6DPose"
+    else:
+        print("Invalid Dataset")
+        return 
     # model
     print('Loading model: {:s}'.format(args.model))
     model = eval(args.model)
@@ -124,7 +132,7 @@ def evaluate(args):
 
     print(f"Start Evaluation")
     start_time = time.time()
-    stats = test(model, data_loader_test, device, log_writer=log_writer, args=args, prefix="NOCS")
+    stats = test(model, data_loader_test, dataset, device, log_writer=log_writer, args=args, prefix="NOCS")
 
 
     # Save more stuff
@@ -152,7 +160,7 @@ def build_dataset(dataset, batch_size, num_workers, test=False):
 
 
 @torch.no_grad()
-def test(model, data_loader, device, args, log_writer=None, prefix='test'):
+def test(model, data_loader, dataset, device, args, log_writer=None, prefix='test'):
 
     model.eval()
     metric_logger = misc.MetricLogger(delimiter="  ")
@@ -169,10 +177,11 @@ def test(model, data_loader, device, args, log_writer=None, prefix='test'):
     all_pt_errors = np.array([])
     all_rot_errors = np.array([])
     all_trans_errors = np.array([])
-    all_class_error = {}
+    all_rot_class_errors = {}
+    all_trans_class_errors = {}
 
     for i, batch in enumerate(tqdm(data_loader)):
-        ignore_keys = set(['depthmap', 'coords', 'focal_length', 'principal_point', 'xy_map', 'dataset', 'label', 'instance', 'idx', 'true_shape', 'rng'])
+        ignore_keys = set(['depthmap', 'coords', 'focal_length', 'principal_point', 'xy_map', 'dataset', 'label', 'instance', 'idx', 'true_shape', 'rng', "class_id", "sym_label"])
         for name in batch.keys():  # pseudo_focal
             if name in ignore_keys:
                 continue
@@ -181,24 +190,44 @@ def test(model, data_loader, device, args, log_writer=None, prefix='test'):
 
         pred1, pred2 = model(batch)
         pt_errors = pt_eval(pred1["pts3d"], batch["pts3d"], batch["valid_mask"])
-        rot_errors, trans_errors, class_errors = pose_eval(pred2["pts3d"], batch["camera_pose"], batch["valid_mask"], batch["crop_params"], batch["focal_length"], batch["principal_point"], batch["class_id"], batch["mug_handle"])
+        if dataset == "NOCS":
+            rot_errors, trans_errors, rot_class_errors, trans_class_errors = pose_eval_nocs(pred2["pts3d"], batch["camera_pose"], batch["valid_mask"], batch["crop_params"], batch["focal_length"], batch["principal_point"], batch["class_id"], batch["mug_handle"])
+        elif dataset == "Omni6DPose":
+            rot_errors, trans_errors, rot_class_errors, trans_class_errors = pose_eval_omni(pred2["pts3d"], batch["camera_pose"], batch["valid_mask"], batch["crop_params"], batch["focal_length"], batch["principal_point"], batch["class_id"], batch["sym_label"])
+        else:
+            print("Invalid Dataset")
+            return {}
         if i == 0:
             all_pt_errors = np.array(pt_errors)
             all_rot_errors = np.array(rot_errors)
             all_trans_errors = np.array(trans_errors)
-            for key in class_errors:
-                class_errors[key] = np.array(class_errors[key])
-            all_class_errors = class_errors
+            for key in rot_class_errors:
+                all_rot_class_errors[key] = np.array(rot_class_errors[key])
+                all_trans_class_errors[key] = np.array(trans_class_errors[key])
         else:
             all_pt_errors = np.concatenate((all_pt_errors, np.array(pt_errors)), axis=0)
             all_rot_errors = np.concatenate((all_rot_errors, np.array(rot_errors)), axis=0)
             all_trans_errors = np.concatenate((all_trans_errors, np.array(trans_errors)), axis=0)
-            for key in all_class_errors.keys():
-                all_class_errors[key] = np.concatenate((all_class_errors[key], np.array(class_errors[key])), axis=0)
+            for key in all_rot_class_errors.keys():
+                all_rot_class_errors[key] = np.concatenate((all_rot_class_errors[key], np.array(rot_class_errors[key])), axis=0)
+                all_trans_class_errors[key] = np.concatenate((all_trans_class_errors[key], np.array(trans_class_errors[key])), axis=0)
             # break
+        
+
+        if i == 1000:
+            break
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
+    degree_thres_list = list(range(0, 16, 1))  + [360]
+    shift_thres_list = [i / 2 for i in range(21)] + [100]
+
+    all_matches = compute_RT_matches(all_rot_errors, all_trans_errors, degree_thres_list, shift_thres_list)
+    class_matches = {}
+    for key in all_rot_class_errors.keys():
+        class_matches[key] = compute_RT_matches(all_rot_class_errors[key], all_trans_class_errors[key], degree_thres_list, shift_thres_list)
+
+    accs, aps, class_accs, class_aps = compute_accs_and_aps(all_matches, class_matches)
 
     results = {
         "Mean Point Error": str(np.mean(all_pt_errors)),
@@ -207,11 +236,18 @@ def test(model, data_loader, device, args, log_writer=None, prefix='test'):
         "Median Rotation Error": str(np.median(all_rot_errors)),
         "Mean Translation Error": str(np.mean(all_trans_errors)),
         "Median Translation Error": str(np.median(all_trans_errors)),
+        "ACCs": str(accs),
+        "APs": str(aps),
     }
     
-    for key in all_class_errors.keys():
-        results["Mean_" + key] = str(np.mean(all_class_errors[key]))
-        results["Median_" + key] = str(np.median(all_class_errors[key]))
+    for key in all_rot_class_errors.keys():
+        results[key + " Mean Rotation Error"] = str(np.mean(all_rot_class_errors[key]))
+        results[key + " Median Rotation Error"] = str(np.median(all_rot_class_errors[key]))
+        results[key + " Mean Translation Error"] = str(np.mean(all_trans_class_errors[key]))
+        results[key + " Median Translation Error"] = str(np.median(all_trans_class_errors[key]))
+        results[key + " ACCs"] = str(class_accs[key])
+        results[key + " APs"] = str(class_aps[key])
+    
     
 
     print(results)

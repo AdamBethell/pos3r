@@ -258,8 +258,8 @@ def build_dataset(dataset, batch_size, num_workers, test=False):
                              batch_size=batch_size,
                              num_workers=num_workers,
                              pin_mem=True,
-                             shuffle=not (test),
-                            # shuffle = False,
+                            #  shuffle=not (test),
+                            shuffle = True,
                              drop_last=not (test))
 
     print(f"{split} dataset length: ", len(loader))
@@ -358,11 +358,12 @@ def test_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     if hasattr(data_loader, 'sampler') and hasattr(data_loader.sampler, 'set_epoch'):
         data_loader.sampler.set_epoch(epoch)
 
-    for _, batch in enumerate(metric_logger.log_every(data_loader, args.print_freq, header)):
-        loss_tuple = loss_of_one_batch(batch, model, criterion, device, use_amp=bool(args.amp), ret='loss')
+    for i, batch in enumerate(metric_logger.log_every(data_loader, args.print_freq, header)):
+        loss_tuple = loss_of_one_batch(batch, model, criterion, device, use_amp=bool(args.amp), ret='loss', i=i, test=True)
         loss_value, loss_details = loss_tuple  # criterion returns two values
         metric_logger.update(loss=float(loss_value), **loss_details)
-        break
+        if i > 100:
+            break
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()

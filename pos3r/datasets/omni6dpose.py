@@ -265,8 +265,10 @@ class Omni6DPose(BaseStereoViewDataset):
         focal_length_ndc = [2 * f / l, 2 * f / l]
         principal_point_ndc = [-2 * px / l + im_W / l, -2 * py / l + im_H / l]
 
-
-        depthmap = Dataset.load_depth(path.replace("color", "depth_1") + "depth_1.exr")
+        if self.mode != "real":
+            depthmap = Dataset.load_depth(path.replace("color", "depth_1") + "depth_1.exr")
+        else:
+            depthmap = Dataset.load_depth(path.replace("color", "depth") + "depth.exr")
         depthmap[depthmap > 3] = 0
 
         # load object mask
@@ -342,6 +344,12 @@ class Omni6DPose(BaseStereoViewDataset):
         size = np.array(size).astype(np.float32)
         bbox_3d = obj.meta.bbox_side_len
         
+        sym_info = self.obj_meta.instance_dict[oid].tag.symmetry
+        sym_str = str(sym_info)
+        # sym_label = self.get_sym_label(sym_str)
+        sym_idx = {'none': 0, 'any': 1, 'half': 2, 'quarter': 3}
+        sym_info = np.array([int(sym_info.any), sym_idx[sym_info.x], sym_idx[sym_info.y], sym_idx[sym_info.z]])
+        class_id = obj.meta.class_label
         view = dict(
             img=rgb,
             depthmap=roi_depth,
@@ -350,8 +358,8 @@ class Omni6DPose(BaseStereoViewDataset):
             depthmap_pose=depthmap_pose,
             ray_pose=ray_pose,
             camera_intrinsics=intrinsics,
-            focal_length=focal_length_ndc,
-            principal_point=principal_point_ndc,
+            focal_length=torch.Tensor(focal_length_ndc),
+            principal_point=torch.Tensor(principal_point_ndc),
             mat_k=mat_K,
             crop_params=crop_params,
             # camera=camera,
@@ -360,6 +368,8 @@ class Omni6DPose(BaseStereoViewDataset):
             dataset=self.dataset_label,
             label=path,
             instance=inst_name,
+            sym_label=sym_info,
+            class_id=class_id,
             # size=size,
             # bbox_3d=bbox_3d
         )

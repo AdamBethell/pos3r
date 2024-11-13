@@ -3,6 +3,7 @@
 # dataset at https://github.com/Omni6DPose/Omni6DPoseAPI - MIT License
 # --------------------------------------------------------
 import os.path as osp
+import os
 import json
 import itertools
 import random

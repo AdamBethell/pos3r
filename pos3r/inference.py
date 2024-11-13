@@ -9,6 +9,7 @@ import torch
 from pos3r.utils.device import to_cpu, collate_with_cat
 from pos3r.utils.misc import invalid_to_nans
 from pos3r.utils.geometry import depthmap_to_pts3d, geotrf
+from pos3r.eval_utils import pt_eval, pose_eval_nocs, pose_eval_omni
 
 
 def _interleave_imgs(img1, img2):
@@ -29,8 +30,8 @@ def make_batch_symmetric(batch):
     return view1, view2
 
 
-def loss_of_one_batch(batch, model, criterion, device, use_amp=False, ret=None, i=0):
-    ignore_keys = set(['depthmap', 'coords', 'focal_length', 'principal_point', 'xy_map', 'dataset', 'label', 'instance', 'idx', 'true_shape', 'rng'])
+def loss_of_one_batch(batch, model, criterion, device, use_amp=False, ret=None, i=0, test=False):
+    ignore_keys = set(['depthmap', 'coords', 'focal_length', 'principal_point', 'xy_map', 'dataset', 'label', 'instance', 'idx', 'true_shape', 'rng', "class_id", "sym_label", "mug_handle"])
     for name in batch.keys():  # pseudo_focal
         if name in ignore_keys:
             continue
@@ -53,7 +54,21 @@ def loss_of_one_batch(batch, model, criterion, device, use_amp=False, ret=None, 
         # loss is supposed to be symmetric
         with torch.cuda.amp.autocast(enabled=False):
             loss = criterion(batch["pts3d"], batch["rays"], pred1, pred2, batch["valid_mask"]) if criterion is not None else None
-
+        if test:
+            pt_errors = pt_eval(pred1["pts3d"], batch["pts3d"], batch["valid_mask"])
+            if batch["dataset"][0] == "NOCS":
+                rot_errors, trans_errors, _ = pose_eval_nocs(pred2["pts3d"], batch["camera_pose"], batch["valid_mask"], batch["crop_params"], batch["focal_length"], batch["principal_point"], batch["class_id"], batch["mug_handle"], class_res=False)
+            elif batch["dataset"][0] == "Omni6DPose":
+                rot_errors, trans_errors, _ = pose_eval_omni(pred2["pts3d"], batch["camera_pose"], batch["valid_mask"], batch["crop_params"], batch["focal_length"], batch["principal_point"], batch["class_id"], batch["sym_label"], class_res=False)
+            else:
+                print("Invalid Dataset")
+                return {}
+            loss_value, loss_details = loss
+            loss_details["Point_Error"] = torch.mean(torch.Tensor(pt_errors))
+            loss_details["Rotation_Error"] = torch.mean(torch.Tensor(rot_errors))
+            loss_details["Translation_Error"] = torch.mean(torch.Tensor(trans_errors))
+            loss = loss_value, loss_details
+        
     result = dict(batch=batch, pred1=pred1, pred2=pred2, loss=loss)
     return result[ret] if ret else result
 
